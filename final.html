@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Weather Station MQTT Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: linear-gradient(135deg, #ff7e5f, #feb47b);
+      color: #fff;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.2);
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-weight: 600;
+      font-size: 1.3em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    p {
+      font-size: 1.5em;
+      margin: 10px 0 0;
+      font-weight: 700;
+    }
+
+    .status {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 8px 15px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 0.9em;
+    }
+
+    .connected {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .disconnected {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .alert-active {
+      background-color: #ff4444 !important;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+
+    .last-update {
+      font-size: 0.8em;
+      opacity: 0.8;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="status" class="status disconnected">Disconnected</div>
+  <h1>Live Weather Station Dashboard</h1>
+  <div class="grid">
+    <div class="card">
+      <h2>Temperature</h2>
+      <p id="temp">--</p>
+      <div class="last-update" id="temp-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Humidity</h2>
+      <p id="humidity">--</p>
+      <div class="last-update" id="humidity-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Rain %</h2>
+      <p id="rain">--</p>
+      <div class="last-update" id="rain-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Pressure</h2>
+      <p id="pressure">--</p>
+      <div class="last-update" id="pressure-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Light</h2>
+      <p id="light">--</p>
+      <div class="last-update" id="light-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>BMP Temp</h2>
+      <p id="bmp_temp">--</p>
+      <div class="last-update" id="bmp_temp-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Altitude</h2>
+      <p id="altitude">--</p>
+      <div class="last-update" id="altitude-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Sea Level Pressure</h2>
+      <p id="sea">--</p>
+      <div class="last-update" id="sea-time">Never</div>
+    </div>
+    <div class="card">
+      <h2>Weather Trend</h2>
+      <p id="trend">--</p>
+      <div class="last-update" id="trend-time">Never</div>
+    </div>
+    <div class="card" style="grid-column: span 3;">
+      <h2>Latest Alert</h2>
+      <p id="alert">No alerts</p>
+      <div class="last-update" id="alert-time">Never</div>
+    </div>
+  </div>
+
+  <script>
+    let client;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    function updateTimestamp(elementId) {
+      const timeElement = document.getElementById(elementId + '-time');
+      if (timeElement) {
+        timeElement.textContent = new Date().toLocaleTimeString();
+      }
+    }
+
+    function connectMQTT() {
+      console.log("Attempting to connect to MQTT...");
+      
+      // Try HiveMQ's public WebSocket broker
+      client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt", {
+        clientId: 'weather_dashboard_' + Math.random().toString(16).substr(2, 8),
+        clean: true,
+        connectTimeout: 4000,
+        reconnectPeriod: 5000,
+      });
+
+      client.on("connect", () => {
+        console.log("Connected to MQTT broker");
+        document.getElementById("status").textContent = "Connected";
+        document.getElementById("status").className = "status connected";
+        reconnectAttempts = 0;
+
+        const topics = [
+          "weather_station_001/temperature",
+          "weather_station_001/humidity", 
+          "weather_station_001/rain",
+          "weather_station_001/pressure",
+          "weather_station_001/light",
+          "weather_station_001/bmp_temp",
+          "weather_station_001/altitude",
+          "weather_station_001/sea_level",
+          "weather_station_001/trend",
+          "weather_station_001/alerts"
+        ];
+
+        topics.forEach(topic => {
+          client.subscribe(topic, (err) => {
+            if (err) {
+              console.error(`Failed to subscribe to ${topic}:`, err);
+            } else {
+              console.log(`Subscribed to ${topic}`);
+            }
+          });
+        });
+      });
+
+      client.on("message", (topic, message) => {
+        console.log(`Received message on ${topic}: ${message.toString()}`);
+        const payload = message.toString();
+        
+        if (topic.includes("temperature") && !topic.includes("bmp")) {
+          document.getElementById("temp").innerText = payload + " °C";
+          updateTimestamp("temp");
+        }
+        else if (topic.includes("humidity")) {
+          document.getElementById("humidity").innerText = payload + " %";
+          updateTimestamp("humidity");
+        }
+        else if (topic.includes("rain")) {
+          document.getElementById("rain").innerText = payload + " %";
+          updateTimestamp("rain");
+        }
+        else if (topic.includes("pressure") && !topic.includes("sea")) {
+          document.getElementById("pressure").innerText = payload + " hPa";
+          updateTimestamp("pressure");
+        }
+        else if (topic.includes("light")) {
+          document.getElementById("light").innerText = payload === "1" ? "Bright" : "Dark";
+          updateTimestamp("light");
+        }
+        else if (topic.includes("bmp_temp")) {
+          document.getElementById("bmp_temp").innerText = payload + " °C";
+          updateTimestamp("bmp_temp");
+        }
+        else if (topic.includes("altitude")) {
+          document.getElementById("altitude").innerText = payload + " m";
+          updateTimestamp("altitude");
+        }
+        else if (topic.includes("sea_level")) {
+          document.getElementById("sea").innerText = payload + " hPa";
+          updateTimestamp("sea");
+        }
+        else if (topic.includes("trend")) {
+          document.getElementById("trend").innerText = payload;
+          updateTimestamp("trend");
+        }
+        else if (topic.includes("alerts")) {
+          const alertElement = document.getElementById("alert");
+          alertElement.innerText = payload;
+          alertElement.parentElement.classList.add("alert-active");
+          updateTimestamp("alert");
+          
+          // Remove alert highlighting after 10 seconds
+          setTimeout(() => {
+            alertElement.parentElement.classList.remove("alert-active");
+          }, 10000);
+        }
+      });
+
+      client.on("error", (error) => {
+        console.error("MQTT connection error:", error);
+        document.getElementById("status").textContent = "Error";
+        document.getElementById("status").className = "status disconnected";
+      });
+
+      client.on("offline", () => {
+        console.log("MQTT client offline");
+        document.getElementById("status").textContent = "Offline";
+        document.getElementById("status").className = "status disconnected";
+      });
+
+      client.on("reconnect", () => {
+        console.log("MQTT client reconnecting...");
+        document.getElementById("status").textContent = "Reconnecting...";
+        document.getElementById("status").className = "status disconnected";
+        reconnectAttempts++;
+      });
+
+      client.on("close", () => {
+        console.log("MQTT connection closed");
+        document.getElementById("status").textContent = "Disconnected";
+        document.getElementById("status").className = "status disconnected";
+      });
+    }
+
+    // Initialize connection when page loads
+    window.addEventListener('load', () => {
+      connectMQTT();
+    });
+
+    // Reconnect button functionality (optional)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'r' && e.ctrlKey) {
+        e.preventDefault();
+        console.log("Manual reconnect triggered");
+        if (client) {
+          client.end();
+        }
+        setTimeout(connectMQTT, 1000);
+      }
+    });
+  </script>
+</body>
+</html>
